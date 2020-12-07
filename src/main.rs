@@ -59,22 +59,22 @@ fn main() -> ! {
     unsafe {
         let rcc = &(*pac::RCC::ptr());
         rcc.apb1enr
-            .write(|w| w.pwren().set_bit().spi2en().set_bit());
+            .modify(|_,w| w.pwren().set_bit().spi2en().set_bit());
     }
 
     //setup  and startup common i2s clock
     unsafe {
         let rcc = &(*pac::RCC::ptr());
         //setup
-        rcc.plli2scfgr.write(|w| {
+        rcc.plli2scfgr.modify(|_,w| {
             if MCK_USE {
                 w.plli2sr().bits(5).plli2sn().bits(192).plli2sm().bits(5)
             } else {
-                w.plli2sr().bits(5).plli2sn().bits(192).plli2sm().bits(4)
+                w.plli2sr().bits(4).plli2sn().bits(64).plli2sm().bits(2)
             }
         });
         //run the clock
-        rcc.cr.write(|w| w.plli2son().set_bit());
+        rcc.cr.modify(|_,w| w.plli2son().set_bit());
         //wait a stable clock
         while rcc.cr.read().plli2srdy().bit_is_clear() {}
     }
@@ -93,21 +93,21 @@ fn main() -> ! {
     unsafe {
         let spi2 = &(*pac::SPI2::ptr());
         spi2.cr2
-            .write(|w| w.txeie().clear_bit().rxneie().clear_bit().errie().set_bit());
+            .modify(|_,w| w.txeie().set_bit().rxneie().clear_bit().errie().set_bit());
         pac::NVIC::unmask(pac::Interrupt::SPI2);
     }
 
     //Spi2 setup for i2s mode
     unsafe {
         let spi2 = &(*pac::SPI2::ptr());
-        spi2.i2spr.write(|w| {
+        spi2.i2spr.modify(|_,w| {
             if MCK_USE {
                 w.i2sdiv().bits(2).odd().set_bit().mckoe().enabled()
             } else {
-                w.i2sdiv().bits(12).odd().set_bit().mckoe().disabled()
+                w.i2sdiv().bits(62).odd().set_bit().mckoe().disabled()
             }
         });
-        spi2.i2scfgr.write(|w| {
+        spi2.i2scfgr.modify(|_,w| {
             w.i2smod()
                 .i2smode() //
                 .i2scfg()
@@ -119,7 +119,7 @@ fn main() -> ! {
                 .ckpol()
                 .idle_low() //
                 .datlen()
-                .twenty_four_bit() //
+                .sixteen_bit() //
                 .chlen()
                 .thirty_two_bit() //
                 .i2se()
@@ -137,33 +137,35 @@ fn main() -> ! {
     let mut data_iter = data.iter().cycle();
 
     loop {
-        if let Some(data) = data_iter.next() {
-            let data = *data as u32;
-            let l = data;
-            let r = data;
+        //if let Some(data) = data_iter.next() {
+        //    let data = *data as u32;
+        //    let l = data;
+        //    let r = data;
 
-            unsafe {
-                let spi2 = &(*pac::SPI2::ptr());
-                while !spi2.sr.read().txe().bit() {}
-                spi2.dr.write(|w| w.dr().bits((l >> 16) as u16));
-                i2s_sr_check();
-                while !spi2.sr.read().txe().bit() {}
-                spi2.dr.write(|w| w.dr().bits((l & 0x00FF) as u16));
-                i2s_sr_check();
-                while !spi2.sr.read().txe().bit() {}
-                spi2.dr.write(|w| w.dr().bits((r >> 16) as u16));
-                i2s_sr_check();
-                while !spi2.sr.read().txe().bit() {}
-                spi2.dr.write(|w| w.dr().bits((r & 0x00FF) as u16));
-                i2s_sr_check();
-            }
-        }
+        //    unsafe {
+        //        let spi2 = &(*pac::SPI2::ptr());
+        //        while !spi2.sr.read().txe().bit() {}
+        //        spi2.dr.modify(|_,w| w.dr().bits((l >> 16) as u16));
+        //        i2s_sr_check();
+        //        while !spi2.sr.read().txe().bit() {}
+        //        spi2.dr.modify(|_,w| w.dr().bits((l & 0x00FF) as u16));
+        //        i2s_sr_check();
+        //        while !spi2.sr.read().txe().bit() {}
+        //        spi2.dr.modify(|_,w| w.dr().bits((r >> 16) as u16));
+        //        i2s_sr_check();
+        //        while !spi2.sr.read().txe().bit() {}
+        //        spi2.dr.modify(|_,w| w.dr().bits((r & 0x00FF) as u16));
+        //        i2s_sr_check();
+        //    }
+        //}
         // your code goes here
     }
 }
 
 #[interrupt]
 fn SPI2() {
+    static mut COUNT: i16 = 0;
+    const COUNT_MAX: i16 = 20;
     unsafe {
         let spi2 = &(*pac::SPI2::ptr());
         if spi2.sr.read().fre().bit() {
@@ -174,6 +176,18 @@ fn SPI2() {
         }
         if spi2.sr.read().udr().bit() {
             rprintln!("underrun");
+        }
+        if spi2.sr.read().txe().bit() {
+            let side = spi2.sr.read().chside().bit();
+            let spl = *COUNT * ((i16::MAX - i16::MAX / 2) / 20);
+
+            spi2.dr.modify(|_, w| w.dr().bits(spl as u16));
+            if side {
+                *COUNT += 1;
+                if *COUNT == COUNT_MAX {
+                    *COUNT = 0;
+                }
+            }
         }
     }
 }
