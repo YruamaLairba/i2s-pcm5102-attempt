@@ -15,25 +15,14 @@ use pac::interrupt;
 use rtt_target::{rprintln, rtt_init_print};
 use stm32f4xx_hal as hal;
 
-fn i2s_sr_check() {
-    unsafe {
-        let spi2 = &(*pac::SPI2::ptr());
-        if spi2.sr.read().fre().bit() {
-            rprintln!("Frame Error");
-        }
-        if spi2.sr.read().ovr().bit() {
-            rprintln!("Overrun");
-        }
-        if spi2.sr.read().udr().bit() {
-            rprintln!("underrun");
-        }
-        if !spi2.sr.read().txe().bit() {
-            rprintln!("buffer not empty");
-        }
-    }
-}
+const PLLI2SM: u8 = 4;
+const PLLI2SN: u16 = 192;
+const PLLI2SR: u8 = 5;
 
-const MCK_USE: bool = false;
+const I2SDIV: u8 = 12;
+const ODD: bool = true;
+
+//const MCK_USE: bool = false;
 
 #[entry]
 fn main() -> ! {
@@ -42,11 +31,6 @@ fn main() -> ! {
     let gpiob = device.GPIOB.split();
     let gpioc = device.GPIOC.split();
     let rcc = device.RCC.constrain();
-    let mut data = [0i32; 480];
-    //build a sawtooth period
-    for (i, e) in data.iter_mut().enumerate() {
-        *e = i32::MIN / 2 + (i as i32 * ((u32::MAX) / 480 / 2) as i32);
-    }
     let _clocks = rcc
         .cfgr
         .use_hse(8.mhz())
@@ -59,22 +43,23 @@ fn main() -> ! {
     unsafe {
         let rcc = &(*pac::RCC::ptr());
         rcc.apb1enr
-            .modify(|_,w| w.pwren().set_bit().spi2en().set_bit());
+            .modify(|_, w| w.pwren().set_bit().spi2en().set_bit());
     }
 
     //setup  and startup common i2s clock
     unsafe {
         let rcc = &(*pac::RCC::ptr());
         //setup
-        rcc.plli2scfgr.modify(|_,w| {
-            if MCK_USE {
-                w.plli2sr().bits(5).plli2sn().bits(192).plli2sm().bits(5)
-            } else {
-                w.plli2sr().bits(4).plli2sn().bits(64).plli2sm().bits(2)
-            }
+        rcc.plli2scfgr.modify(|_, w| {
+            w.plli2sr()
+                .bits(PLLI2SR)
+                .plli2sn()
+                .bits(PLLI2SN)
+                .plli2sm()
+                .bits(PLLI2SM)
         });
         //run the clock
-        rcc.cr.modify(|_,w| w.plli2son().set_bit());
+        rcc.cr.modify(|_, w| w.plli2son().set_bit());
         //wait a stable clock
         while rcc.cr.read().plli2srdy().bit_is_clear() {}
     }
@@ -93,21 +78,17 @@ fn main() -> ! {
     unsafe {
         let spi2 = &(*pac::SPI2::ptr());
         spi2.cr2
-            .modify(|_,w| w.txeie().set_bit().rxneie().clear_bit().errie().set_bit());
+            .modify(|_, w| w.txeie().clear_bit().rxneie().clear_bit().errie().set_bit());
         pac::NVIC::unmask(pac::Interrupt::SPI2);
     }
 
     //Spi2 setup for i2s mode
     unsafe {
         let spi2 = &(*pac::SPI2::ptr());
-        spi2.i2spr.modify(|_,w| {
-            if MCK_USE {
-                w.i2sdiv().bits(2).odd().set_bit().mckoe().enabled()
-            } else {
-                w.i2sdiv().bits(62).odd().set_bit().mckoe().disabled()
-            }
+        spi2.i2spr.modify(|_, w| {
+                w.i2sdiv().bits(I2SDIV).odd().bit(ODD).mckoe().disabled()
         });
-        spi2.i2scfgr.modify(|_,w| {
+        spi2.i2scfgr.modify(|_, w| {
             w.i2smod()
                 .i2smode() //
                 .i2scfg()
@@ -134,30 +115,28 @@ fn main() -> ! {
         rprintln!("{:#032b} {}", spi2_sr, spi2.sr.read().txe().bit());
     }
 
-    let mut data_iter = data.iter().cycle();
-
     loop {
-        //if let Some(data) = data_iter.next() {
-        //    let data = *data as u32;
-        //    let l = data;
-        //    let r = data;
+        for spl_n in 0..100 {
+            let spl = spl_n * ((i16::MAX - i16::MAX / 2) / 100);
+            let l = spl;
+            let r = spl;
 
-        //    unsafe {
-        //        let spi2 = &(*pac::SPI2::ptr());
-        //        while !spi2.sr.read().txe().bit() {}
-        //        spi2.dr.modify(|_,w| w.dr().bits((l >> 16) as u16));
-        //        i2s_sr_check();
-        //        while !spi2.sr.read().txe().bit() {}
-        //        spi2.dr.modify(|_,w| w.dr().bits((l & 0x00FF) as u16));
-        //        i2s_sr_check();
-        //        while !spi2.sr.read().txe().bit() {}
-        //        spi2.dr.modify(|_,w| w.dr().bits((r >> 16) as u16));
-        //        i2s_sr_check();
-        //        while !spi2.sr.read().txe().bit() {}
-        //        spi2.dr.modify(|_,w| w.dr().bits((r & 0x00FF) as u16));
-        //        i2s_sr_check();
-        //    }
-        //}
+            unsafe {
+                let spi2 = &(*pac::SPI2::ptr());
+                while !spi2.sr.read().txe().bit() {}
+                spi2.dr.modify(|_, w| w.dr().bits(l as u16));
+                // i2s_sr_check();
+                // while !spi2.sr.read().txe().bit() {}
+                // spi2.dr.modify(|_,w| w.dr().bits((l & 0x00FF) as u16));
+                // i2s_sr_check();
+                while !spi2.sr.read().txe().bit() {}
+                spi2.dr.modify(|_, w| w.dr().bits(r as u16));
+                // i2s_sr_check();
+                // while !spi2.sr.read().txe().bit() {}
+                // spi2.dr.modify(|_,w| w.dr().bits((r & 0x00FF) as u16));
+                // i2s_sr_check();
+            }
+        }
         // your code goes here
     }
 }
