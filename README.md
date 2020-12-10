@@ -40,3 +40,8 @@ stm32f4xx using a 8Mhz external oscillator. To Adapt it, you need:
 This require `cargo embed`, you can install it with `cargo install cargo-embed`.
 Just run `cargo embed` to build, load, and run the firmware.
 
+## License
+
+This project is licensed under terms of both MIT and Apache licenses. See
+[LICENSE-APACHE.txt](LICENSE-APACHE.txt) and
+[LICENSE-MIT.txt](LICENSE-MIT.txt).
