@@ -1,10 +1,10 @@
 #![no_std]
 #![no_main]
 
-use crate::hal::{pac, prelude::*};
+use crate::hal::{stm32, prelude::*};
 use core::panic::PanicInfo;
 use cortex_m_rt::entry;
-use pac::interrupt;
+use stm32::interrupt;
 use rtt_target::{rprintln, rtt_init_print};
 use stm32f4xx_hal as hal;
 
@@ -26,7 +26,7 @@ const SAWTOOTH_PERIOD: u16 = 48_000 / 110;
 #[entry]
 fn main() -> ! {
     rtt_init_print!();
-    let device = pac::Peripherals::take().unwrap();
+    let device = stm32::Peripherals::take().unwrap();
     let gpiob = device.GPIOB.split();
     let gpioc = device.GPIOC.split();
     let rcc = device.RCC.constrain();
@@ -40,14 +40,14 @@ fn main() -> ! {
         .freeze();
     //enable system clock on APB1 bus and SPI2
     unsafe {
-        let rcc = &(*pac::RCC::ptr());
+        let rcc = &(*stm32::RCC::ptr());
         rcc.apb1enr
             .modify(|_, w| w.pwren().set_bit().spi2en().set_bit());
     }
 
     //setup  and startup common i2s clock
     unsafe {
-        let rcc = &(*pac::RCC::ptr());
+        let rcc = &(*stm32::RCC::ptr());
         //setup
         rcc.plli2scfgr.modify(|_, w| {
             w.plli2sr()
@@ -76,15 +76,15 @@ fn main() -> ! {
 
     //spi2 interrupt
     unsafe {
-        let spi2 = &(*pac::SPI2::ptr());
+        let spi2 = &(*stm32::SPI2::ptr());
         spi2.cr2
             .modify(|_, w| w.txeie().clear_bit().rxneie().clear_bit().errie().set_bit());
-        pac::NVIC::unmask(pac::Interrupt::SPI2);
+        stm32::NVIC::unmask(stm32::Interrupt::SPI2);
     }
 
     //Spi2 setup for i2s mode
     unsafe {
-        let spi2 = &(*pac::SPI2::ptr());
+        let spi2 = &(*stm32::SPI2::ptr());
         spi2.i2spr
             .modify(|_, w| w.i2sdiv().bits(I2SDIV).odd().bit(ODD).mckoe().bit(MCK));
         spi2.i2scfgr.modify(|_, w| {
@@ -115,7 +115,7 @@ fn main() -> ! {
             let r = spl;
 
             unsafe {
-                let spi2 = &(*pac::SPI2::ptr());
+                let spi2 = &(*stm32::SPI2::ptr());
                 while !spi2.sr.read().txe().bit() {}
                 spi2.dr.modify(|_, w| w.dr().bits(l as u16));
                 while !spi2.sr.read().txe().bit() {}
@@ -129,7 +129,7 @@ fn main() -> ! {
 fn SPI2() {
     static mut SPL_N: u16 = 0;
     unsafe {
-        let spi2 = &(*pac::SPI2::ptr());
+        let spi2 = &(*stm32::SPI2::ptr());
         if spi2.sr.read().fre().bit() {
             rprintln!("Frame Error");
         }
